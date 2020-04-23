@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+
+import getopt
+import os
+import sys
+from shutil import which
+
+import boto3
+import yaml
+
+version = "v1.0.0"
+aws_session = None
+
+
+def main(argv):
+    verify_commands()
+
+    # Get options
+    try:
+        opts, args = getopt.getopt(argv, "hf:p:c:n:r:v:", [
+            "config-file=", "aws-profile=", "cluster=", "namespace=", "role-arn=", "version"
+        ])
+    except getopt.GetoptError:
+        print_help()
+        sys.exit(2)
+
+    # Defaults
+    kubectl_config_file = "~/.kube/config"
+    aws_profile = None
+    cluster_name = None
+    namespace = None
+    role_arn = None
+
+    if len(opts) == 0:
+        print_help()
+        sys.exit(0)
+
+    # Run over options
+    for opt, arg in opts:
+        if opt in ("-v", "-h", "--version"):
+            print_help()
+            sys.exit(0)
+        elif opt in ("-f", "--config-file"):
+            kubectl_config_file = arg
+        elif opt in ("-p", "--aws-profile"):
+            aws_profile = arg
+        elif opt in ("-c", "--cluster"):
+            cluster_name = arg
+        elif opt in ("-n", "--namespace"):
+            namespace = arg
+        elif opt in ("-r", "--role-arn"):
+            role_arn = arg
+
+    # Validate defaults
+    if cluster_name is None:
+        print("Cluster name is required")
+        sys.exit(0)
+
+    global aws_session
+    aws_session = boto3.Session(profile_name=aws_profile)
+
+    run(kubectl_config_file, cluster_name, namespace, role_arn, aws_profile)
+
+
+def verify_commands():
+    if which("kubectl") is None:
+        print("Command 'kubectl' not found in path")
+        sys.exit(1)
+
+    if which("aws") is None:
+        print("Command 'aws' not found in path")
+        sys.exit(1)
+
+
+def print_help():
+    global version
+    print('Usage: kubectl-updater-aws [options]')
+    print('')
+    print('Options:')
+    print('--cluster | -c \t\tThe cluster name to use')
+    print('[--role-arn | -r] \tThe role ARN to assume')
+    print('[--config-file | -f] \tThe kubectl config file to use (default = ~/.kube/config)')
+    print('[--namespace | -n] \tThe namespace to authenticate with')
+    print('[--aws-profile | -p] \tThe AWS profile to use')
+    print('')
+    print('Version: ' + version)
+    print('Author: Youri Lefers <youri.lefers@x-ip.nl>')
+
+
+def run(kubectl_config_file, cluster_name, namespace=None, role_arn=None, profile=None):
+    # Expand config file if needed
+    kubectl_config_file = config_file_path(kubectl_config_file)
+
+    # Read the existing config file
+    document = open_yaml_file(kubectl_config_file)
+
+    # Verify cluster registration
+    document, cluster_arn = verify_or_add_cluster(document, cluster_name)
+
+    # Verify user
+    document, user_name = verify_or_add_user(document, cluster_name, namespace, role_arn, profile)
+
+    # Verify context
+    document, context_name = verify_or_add_context(document, cluster_arn, user_name, namespace)
+
+    # Write file!
+    write_yaml_file(kubectl_config_file, document)
+    print("You can switch to the new context named: " + context_name)
+
+
+def config_file_path(kubectl_config_file):
+    if kubectl_config_file.startswith('~'):
+        kubectl_config_file = os.path.expanduser(kubectl_config_file)
+    return kubectl_config_file
+
+
+def open_yaml_file(kubectl_config_file):
+    try:
+        with open(kubectl_config_file) as yaml_file:
+            return yaml.full_load(yaml_file)
+    except EnvironmentError:
+        return {
+            'apiVersion': 'v1',
+            'kind': 'Config',
+            'preferences': {},
+            'current-context': None,
+            'clusters': [],
+            'contexts': [],
+            'users': [],
+        }
+
+
+def write_yaml_file(kubectl_config_file, document):
+    try:
+        with open(kubectl_config_file, 'w') as yaml_file:
+            yaml.dump(document, yaml_file)
+    except EnvironmentError:
+        print('File is probably not writeable!')
+
+
+def verify_or_add_cluster(document, cluster_name):
+    global aws_session
+
+    client = aws_session.client('eks')
+
+    cluster = client.describe_cluster(name=cluster_name)
+    if cluster is None:
+        print("Cluster with name " + cluster_name + " not found")
+        sys.exit(1)
+
+    cluster_arn = cluster['cluster']['arn']
+
+    if document['clusters'] is not None and isinstance(document['clusters'], list):
+        for existing_cluster in document['clusters']:
+            if existing_cluster['name'] == cluster_arn:
+                document['clusters'].remove(existing_cluster)
+
+    if document['clusters'] is None:
+        document['clusters'] = []
+
+    document['clusters'].append({
+        'name': cluster_arn,
+        'cluster': {
+            'server': cluster['cluster']['endpoint'],
+            'certificate-authority-data': cluster['cluster']['certificateAuthority']['data']
+        }
+    })
+
+    return document, cluster_arn
+
+
+def verify_or_add_user(document, cluster_name, namespace=None, role_arn=None, profile=None):
+    global aws_session
+
+    client = aws_session.client('eks')
+    cluster = client.describe_cluster(name=cluster_name)
+
+    user_name = cluster['cluster']['arn']
+    if namespace is not None:
+        user_name += "_" + namespace
+
+    if document['users'] is not None and isinstance(document['users'], list):
+        for existing_user in document['users']:
+            if existing_user['name'] == user_name:
+                document['users'].remove(existing_user)
+
+    if document['users'] is None:
+        document['users'] = []
+
+    args = [
+        '--region',
+        aws_session.region_name,
+        'eks',
+        'get-token',
+        '--cluster-name',
+        cluster['cluster']['name'],
+    ]
+
+    if role_arn is not None:
+        args.append('--role')
+        args.append(role_arn)
+
+    env = None
+
+    if profile is not None:
+        env = [{
+            'name': 'AWS_PROFILE',
+            'value': profile
+        }]
+
+    document['users'].append({
+        'name': user_name,
+        'user': {
+            'exec': {
+                'apiVersion': 'client.authentication.k8s.io/v1alpha1',
+                'command': 'aws',
+                'args': args,
+                'env': env,
+            }
+        }
+    })
+
+    return document, user_name
+
+
+def verify_or_add_context(document, cluster_arn, user_name, namespace=None):
+    context_name = cluster_arn
+    if namespace is not None:
+        context_name += "____" + namespace
+
+    if document['contexts'] is not None and isinstance(document['contexts'], list):
+        for existing_context in document['contexts']:
+            if existing_context['name'] == context_name:
+                document['contexts'].remove(existing_context)
+
+    context = {
+        'cluster': cluster_arn,
+        'user': user_name
+    }
+
+    if namespace is not None:
+        context['namespace'] = namespace
+
+    if document['contexts'] is None:
+        document['contexts'] = []
+
+    document['contexts'].append({
+        'name': context_name,
+        'context': context
+    })
+    document['current-context'] = context_name
+
+    return document, context_name
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
