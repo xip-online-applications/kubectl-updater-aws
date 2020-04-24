@@ -1,6 +1,8 @@
-# AWS kubeconfig updater
+# AWS EKS kubectl config updater
 
-This Python script updates the `.kube/config` file for AWS.
+The AWS EKS update-kubeconfig command does a terrible job in updating your kubectl configuration file when your using
+the same cluster for multiple roles and namespaces like we do for access authorization. This script will update your
+kubectl config file for use with AWS EKS per role/namespace.
 
 ## Requirements
 
