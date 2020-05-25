@@ -8,12 +8,6 @@ kubectl config file for use with AWS EKS per role/namespace.
 
 You need at least Python 3.
 
-Install the following Python packages:
-
-```bash
-pip3 install pyyaml boto3
-```
-
 ## Install
 
 To install the script, use the following command:
