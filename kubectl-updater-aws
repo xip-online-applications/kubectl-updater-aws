@@ -85,6 +85,7 @@ def print_help():
     print('')
     print('Version: ' + version)
     print('Author: Youri Lefers <youri.lefers@x-ip.nl>')
+    print('Repository: https://github.com/xip-online-applications/kubectl-updater-aws')
 
 
 def run(kubectl_config_file, cluster_name, namespace=None, role_arn=None, profile=None):

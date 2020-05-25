@@ -18,16 +18,8 @@ pip3 install pyyaml boto3
 
 To install the script, use the following command:
 
-MacOS:
-
 ```bash
-curl -o /usr/local/bin/kubectl-updater-aws https://raw.githubusercontent.com/xip-online-applications/kubectl-updater-aws/master/kubectl-updater-aws; chmod +x /usr/local/bin/kubectl-updater-aws 
-```
-
-Linux:
-
-```bash
-curl -o /usr/bin/kubectl-updater-aws https://raw.githubusercontent.com/xip-online-applications/kubectl-updater-aws/master/kubectl-updater-aws; chmod +x /usr/bin/kubectl-updater-aws
+wget -O - https://raw.githubusercontent.com/xip-online-applications/kubectl-updater-aws/master/install.sh | bash
 ```
 
 ## Usage
