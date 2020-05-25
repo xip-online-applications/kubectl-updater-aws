@@ -13,7 +13,7 @@ You need at least Python 3.
 To install the script, use the following command:
 
 ```bash
-wget -O - https://raw.githubusercontent.com/xip-online-applications/kubectl-updater-aws/master/install.sh | bash
+wget -qO - https://raw.githubusercontent.com/xip-online-applications/kubectl-updater-aws/master/install.sh | bash
 ```
 
 ## Usage
